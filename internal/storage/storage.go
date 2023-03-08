@@ -121,12 +121,9 @@ func NewBalancedStorage(cli *dockercli.Client, bucketName string) Storage {
 	}
 }
 
-// consistent package doesn't provide a default hashing function.
-// You should provide a proper one to distribute keys/members uniformly.
 type hasher struct{}
 
 func (h hasher) Sum64(data []byte) uint64 {
-	// you should use a proper hash function for uniformity.
 	return xxhash.Sum64(data)
 }
 
@@ -216,6 +213,9 @@ func (s *balancedStorage) getStorageWorker(ctx context.Context, id string) (stor
 		SecretKey:  node.SecretKey,
 		BucketName: s.bucketName,
 	})
+	if err != nil {
+		return
+	}
 	if err = storage.Setup(ctx); err != nil {
 		return
 	}
@@ -223,7 +223,7 @@ func (s *balancedStorage) getStorageWorker(ctx context.Context, id string) (stor
 		err = fmt.Errorf("cannot get storage %s, err: %w", storageID, err)
 		return
 	}
-	log.Printf("using worker '%s' for id '%s'\n", storageID, id)
+	log.Printf("using storage worker '%s' for object '%s'\n", storageID, id)
 	return
 }
 

@@ -24,9 +24,7 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	cli, err := dockercli.NewClientWithOpts(dockercli.FromEnv)
-	if err != nil {
-		panic(err)
-	}
+	exit(err)
 	bucketName := os.Getenv("BUCKET_NAME")
 	if bucketName == "" {
 		bucketName = "default"
@@ -38,7 +36,6 @@ func main() {
 	go func() {
 		if err := mainSrv.Start(":3000"); err != nil {
 			log.Printf("Server error: %s\n", err)
-			return
 		}
 	}()
 
@@ -55,9 +52,6 @@ func main() {
 
 	closeCtx, cancelClose := context.WithTimeout(ctx, time.Second*3)
 	defer cancelClose()
-	if err := mainSrv.Shutdown(closeCtx); err != nil {
-		log.Printf("Cannot shutdown server, err: %s\n", err)
-		os.Exit(1)
-	}
+	exit(mainSrv.Shutdown(closeCtx))
 	log.Println("Server shutdown completed successfully")
 }
