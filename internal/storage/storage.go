@@ -62,7 +62,6 @@ func newMinioStorage(cfg *minioConfig) (s Storage, err error) {
 func (s *minioStorage) Setup(ctx context.Context) (err error) {
 	exists, bucketExistsErr := s.cli.BucketExists(s.bucketName)
 	if bucketExistsErr == nil && exists {
-		log.Printf("We already own %s\n", s.bucketName)
 		return
 	}
 	if bucketExistsErr != nil {
