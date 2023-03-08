@@ -28,7 +28,7 @@ type Storage interface {
 	Get(ctx context.Context, id string) (body []byte, err error)
 }
 
-type Config struct {
+type minioConfig struct {
 	Endpoint  string
 	AccessKey string
 	SecretKey string
@@ -38,7 +38,7 @@ type minioStorage struct {
 	cli *minio.Client
 }
 
-func NewMinioStorage(cfg *Config) (s Storage, err error) {
+func newMinioStorage(cfg *minioConfig) (s Storage, err error) {
 	cli, err := minio.NewWithOptions(cfg.Endpoint, &minio.Options{
 		Creds:  credentials.NewStaticV4(cfg.AccessKey, cfg.SecretKey, ""),
 		Secure: false,
@@ -107,7 +107,7 @@ func (n storageNode) String() string {
 	return fmt.Sprintf("%s.%s", n.ID, n.Name)
 }
 
-func (s *balancedStorage) Put(ctx context.Context, id string, body []byte) (err error) {
+func (s balancedStorage) getStorageNodes(ctx context.Context) (storageNodes map[string]storageNode, err error) {
 	containers, err := s.cli.ContainerList(ctx, types.ContainerListOptions{
 		Filters: filters.NewArgs(filters.KeyValuePair{
 			Key: "status", Value: "running",
@@ -118,7 +118,7 @@ func (s *balancedStorage) Put(ctx context.Context, id string, body []byte) (err 
 		return
 	}
 
-	storageNodes := make(map[string]storageNode, len(containers))
+	storageNodes = make(map[string]storageNode, len(containers))
 containerLoop:
 	for _, container := range containers {
 		node := storageNode{
@@ -150,24 +150,63 @@ containerLoop:
 			storageNodes[node.String()] = node
 		}
 	}
+	return
+}
 
+func (s *balancedStorage) registerStorageNodes(storageNodes map[string]storageNode) (c *consistent.Consistent) {
 	cfg := consistent.Config{
 		PartitionCount:    len(storageNodes),
-		ReplicationFactor: 20,
+		ReplicationFactor: 0,
 		Load:              1.25,
 		Hasher:            hasher{},
 	}
-	c := consistent.New(nil, cfg)
+	c = consistent.New(nil, cfg)
 	for _, node := range storageNodes {
 		c.Add(node)
 	}
+	return
+}
 
-	nodeID := c.LocateKey([]byte(id))
-	node := storageNodes[nodeID.String()]
-	fmt.Printf("node: %s %s\n", node.Endpoint, node.Name)
+func (s *balancedStorage) getStorageWorker(ctx context.Context, id string) (storage Storage, storageID string, err error) {
+	storageNodes, err := s.getStorageNodes(ctx)
+	if err != nil {
+		return
+	}
+	consistent := s.registerStorageNodes(storageNodes)
+	storageID = consistent.LocateKey([]byte(id)).String()
+	node := storageNodes[storageID]
+	storage, err = newMinioStorage(&minioConfig{
+		Endpoint:  node.Endpoint,
+		AccessKey: node.AccessKey,
+		SecretKey: node.SecretKey,
+	})
+	if err != nil {
+		err = fmt.Errorf("cannot get storage %s, err: %w", storageID, err)
+		return
+	}
+	return
+}
+
+func (s *balancedStorage) Put(ctx context.Context, id string, body []byte) (err error) {
+	storage, storageID, err := s.getStorageWorker(ctx, id)
+	if err != nil {
+		return
+	}
+	err = storage.Put(ctx, id, body)
+	if err != nil {
+		err = fmt.Errorf("cannot put using worker '%s', err: %w", storageID, err)
+	}
 	return
 }
 
 func (s *balancedStorage) Get(ctx context.Context, id string) (body []byte, err error) {
+	storage, storageID, err := s.getStorageWorker(ctx, id)
+	if err != nil {
+		return
+	}
+	body, err = storage.Get(ctx, id)
+	if err != nil {
+		err = fmt.Errorf("cannot get using worker '%s', err: %w", storageID, err)
+	}
 	return
 }

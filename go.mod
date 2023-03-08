@@ -7,6 +7,8 @@ require (
 	github.com/minio/minio-go v6.0.14+incompatible
 )
 
+require golang.org/x/exp v0.0.0-20220303212507-bbda1eaf7a17 // indirect
+
 require (
 	github.com/Microsoft/go-winio v0.6.0 // indirect
 	github.com/buraksezer/consistent v0.10.0 // indirect
@@ -37,6 +39,7 @@ require (
 	github.com/opencontainers/image-spec v1.0.2 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rs/xid v1.4.0 // indirect
+	github.com/samber/lo v1.37.0
 	github.com/sirupsen/logrus v1.9.0 // indirect
 	github.com/valyala/bytebufferpool v1.0.0 // indirect
 	github.com/valyala/fasttemplate v1.2.2 // indirect
