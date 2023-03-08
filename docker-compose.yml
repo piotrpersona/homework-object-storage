@@ -42,7 +42,8 @@ services:
       amazin-object-storage:
         ipv4_address: 169.253.0.5
     environment:
-      - DOCKER_API_VERSION=1.41
+      DOCKER_API_VERSION: "1.41"
+      BUCKET_NAME: "bucket"
     volumes:
     - /var/run/docker.sock:/var/run/docker.sock
 

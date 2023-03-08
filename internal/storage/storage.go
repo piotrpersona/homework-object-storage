@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"io"
+	"log"
 	"strings"
 
 	"github.com/buraksezer/consistent"
@@ -16,26 +18,29 @@ import (
 )
 
 const (
-	bucketName                 = "example"
 	workerContainerNamePattern = "amazin-object-storage-node-"
 	dockerNetwork              = "homework-object-storage_amazin-object-storage"
 	accessKeyEnv               = "MINIO_ACCESS_KEY"
 	secretKeyEnv               = "MINIO_SECRET_KEY"
+	minioWorkerPort            = 9000
 )
 
 type Storage interface {
-	Put(ctx context.Context, id string, body []byte) (err error)
-	Get(ctx context.Context, id string) (body []byte, err error)
+	Setup(ctx context.Context) (err error)
+	Put(ctx context.Context, id, contentType string, body []byte) (err error)
+	Get(ctx context.Context, id string) (body []byte, contentType string, err error)
 }
 
 type minioConfig struct {
-	Endpoint  string
-	AccessKey string
-	SecretKey string
+	Endpoint   string
+	AccessKey  string
+	SecretKey  string
+	BucketName string
 }
 
 type minioStorage struct {
-	cli *minio.Client
+	cli        *minio.Client
+	bucketName string
 }
 
 func newMinioStorage(cfg *minioConfig) (s Storage, err error) {
@@ -48,13 +53,35 @@ func newMinioStorage(cfg *minioConfig) (s Storage, err error) {
 		return
 	}
 	s = &minioStorage{
-		cli: cli,
+		cli:        cli,
+		bucketName: cfg.BucketName,
 	}
 	return
 }
 
-func (s *minioStorage) Put(ctx context.Context, id string, body []byte) (err error) {
-	_, err = s.cli.PutObjectWithContext(ctx, bucketName, id, bytes.NewReader(body), int64(len(body)), minio.PutObjectOptions{})
+func (s *minioStorage) Setup(ctx context.Context) (err error) {
+	exists, bucketExistsErr := s.cli.BucketExists(s.bucketName)
+	if bucketExistsErr == nil && exists {
+		log.Printf("We already own %s\n", s.bucketName)
+		return
+	}
+	if bucketExistsErr != nil {
+		err = fmt.Errorf("cannot get bucket info, err: %w", bucketExistsErr)
+		return
+	}
+	makeErr := s.cli.MakeBucket(s.bucketName, "")
+	if makeErr == nil {
+		log.Printf("Successfully created bucket %s\n", s.bucketName)
+		return
+	}
+	err = fmt.Errorf("cannot create bucket %s, err: %w", s.bucketName, makeErr)
+	return
+}
+
+func (s *minioStorage) Put(ctx context.Context, id, contentType string, body []byte) (err error) {
+	_, err = s.cli.PutObjectWithContext(ctx, s.bucketName, id, bytes.NewReader(body), int64(len(body)), minio.PutObjectOptions{
+		ContentType: contentType,
+	})
 	if err != nil {
 		err = fmt.Errorf("cannot put object '%s' into storage instance, err: %w", id, err)
 		return
@@ -62,13 +89,19 @@ func (s *minioStorage) Put(ctx context.Context, id string, body []byte) (err err
 	return
 }
 
-func (s *minioStorage) Get(ctx context.Context, id string) (body []byte, err error) {
-	object, err := s.cli.GetObjectWithContext(ctx, bucketName, id, minio.GetObjectOptions{})
+func (s *minioStorage) Get(ctx context.Context, id string) (body []byte, contentType string, err error) {
+	object, err := s.cli.GetObjectWithContext(ctx, s.bucketName, id, minio.GetObjectOptions{})
 	if err != nil {
 		err = fmt.Errorf("cannot get object '%s', err: %w", id, err)
 		return
 	}
-	_, err = object.Read(body)
+	info, err := object.Stat()
+	if err != nil {
+		err = fmt.Errorf("cannot get object stats, err: %w", err)
+		return
+	}
+	contentType = info.ContentType
+	body, err = io.ReadAll(object)
 	if err != nil {
 		err = fmt.Errorf("cannot read object '%s' body, err: %w", id, err)
 		return
@@ -77,12 +110,14 @@ func (s *minioStorage) Get(ctx context.Context, id string) (body []byte, err err
 }
 
 type balancedStorage struct {
-	cli *dockercli.Client
+	cli        *dockercli.Client
+	bucketName string
 }
 
-func NewBalancedStorage(cli *dockercli.Client) Storage {
+func NewBalancedStorage(cli *dockercli.Client, bucketName string) Storage {
 	return &balancedStorage{
-		cli: cli,
+		cli:        cli,
+		bucketName: bucketName,
 	}
 }
 
@@ -127,7 +162,7 @@ containerLoop:
 		if container.NetworkSettings == nil {
 			continue containerLoop
 		}
-		node.Endpoint = fmt.Sprintf("%s:%d", container.NetworkSettings.Networks[dockerNetwork].IPAddress, 9000)
+		node.Endpoint = fmt.Sprintf("%s:%d", container.NetworkSettings.Networks[dockerNetwork].IPAddress, minioWorkerPort)
 
 		inspectData, inspectErr := s.cli.ContainerInspect(ctx, container.ID)
 		if inspectErr != nil {
@@ -176,35 +211,65 @@ func (s *balancedStorage) getStorageWorker(ctx context.Context, id string) (stor
 	storageID = consistent.LocateKey([]byte(id)).String()
 	node := storageNodes[storageID]
 	storage, err = newMinioStorage(&minioConfig{
-		Endpoint:  node.Endpoint,
-		AccessKey: node.AccessKey,
-		SecretKey: node.SecretKey,
+		Endpoint:   node.Endpoint,
+		AccessKey:  node.AccessKey,
+		SecretKey:  node.SecretKey,
+		BucketName: s.bucketName,
 	})
+	if err = storage.Setup(ctx); err != nil {
+		return
+	}
 	if err != nil {
 		err = fmt.Errorf("cannot get storage %s, err: %w", storageID, err)
 		return
 	}
+	log.Printf("using worker '%s' for id '%s'\n", storageID, id)
 	return
 }
 
-func (s *balancedStorage) Put(ctx context.Context, id string, body []byte) (err error) {
+func (s *balancedStorage) Setup(ctx context.Context) (err error) {
+	nodes, err := s.getStorageNodes(ctx)
+	if err != nil {
+		return
+	}
+	for _, node := range nodes {
+		storage, createStorageErr := newMinioStorage(&minioConfig{
+			Endpoint:   node.Endpoint,
+			AccessKey:  node.AccessKey,
+			SecretKey:  node.SecretKey,
+			BucketName: s.bucketName,
+		})
+		if createStorageErr != nil {
+			err = fmt.Errorf("cannot create minio storage %s, err: %w", node.String(), createStorageErr)
+			return
+		}
+		err = storage.Setup(ctx)
+		if err != nil {
+			err = fmt.Errorf("cannot setup storage %s, err: %w", node.String(), err)
+			return
+		}
+	}
+	return
+}
+
+func (s *balancedStorage) Put(ctx context.Context, id, contentType string, body []byte) (err error) {
 	storage, storageID, err := s.getStorageWorker(ctx, id)
 	if err != nil {
 		return
 	}
-	err = storage.Put(ctx, id, body)
+	err = storage.Put(ctx, id, contentType, body)
 	if err != nil {
 		err = fmt.Errorf("cannot put using worker '%s', err: %w", storageID, err)
 	}
 	return
 }
 
-func (s *balancedStorage) Get(ctx context.Context, id string) (body []byte, err error) {
+func (s *balancedStorage) Get(ctx context.Context, id string) (body []byte, contentType string, err error) {
 	storage, storageID, err := s.getStorageWorker(ctx, id)
 	if err != nil {
 		return
 	}
-	body, err = storage.Get(ctx, id)
+	body, contentType, err = storage.Get(ctx, id)
 	if err != nil {
 		err = fmt.Errorf("cannot get using worker '%s', err: %w", storageID, err)
 	}

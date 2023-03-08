@@ -23,17 +23,15 @@ func exit(err error) {
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	// storage, err := storage.NewMinioStorage(&storage.Config{
-	// 	Endpoint:  "169.253.0.2:9000",
-	// 	AccessKey: "ring",
-	// 	SecretKey: "treepotato",
-	// })
-	// exit(err)
 	cli, err := dockercli.NewClientWithOpts(dockercli.FromEnv)
 	if err != nil {
 		panic(err)
 	}
-	storage := storage.NewBalancedStorage(cli)
+	bucketName := os.Getenv("BUCKET_NAME")
+	if bucketName == "" {
+		bucketName = "default"
+	}
+	storage := storage.NewBalancedStorage(cli, bucketName)
 
 	mainSrv := gateway.NewServer(storage)
 
