@@ -25,10 +25,10 @@ type ResponseMessage struct {
 func putObject(storage storage.Storage) func(c echo.Context) error {
 	return func(c echo.Context) error {
 		ctx := c.Request().Context()
-		objectID := "object"
+		objectID := c.Param("id")
 		err := storage.Put(ctx, objectID, []byte("example"))
 		if err != nil {
-			log.Printf("gannot put object, err: %s", err)
+			log.Printf("cannot put object, err: %s", err)
 			return c.JSON(http.StatusInternalServerError, ResponseMessage{Message: fmt.Sprintf("cannot put object '%s'", objectID)})
 		}
 		return c.JSON(http.StatusOK, ResponseMessage{Message: fmt.Sprintf("object '%s' was successfully put", objectID)})
@@ -41,7 +41,7 @@ func getObject(storage storage.Storage) func(c echo.Context) error {
 		objectID := "object"
 		bytes, err := storage.Get(ctx, objectID)
 		if err != nil {
-			log.Printf("gannot get object, err: %s", err)
+			log.Printf("cannot get object, err: %s", err)
 			return c.JSON(http.StatusInternalServerError, ResponseMessage{Message: fmt.Sprintf("cannot get object '%s'", objectID)})
 		}
 		return c.Blob(http.StatusOK, "text/plain", bytes)

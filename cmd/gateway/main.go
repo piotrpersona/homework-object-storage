@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	dockercli "github.com/docker/docker/client"
 	"github.com/spacelift-io/homework-object-storage/internal/gateway"
 	"github.com/spacelift-io/homework-object-storage/internal/storage"
 )
@@ -22,12 +23,17 @@ func exit(err error) {
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	storage, err := storage.NewMinioStorage(&storage.Config{
-		Endpoint:  "169.253.0.2:9000",
-		AccessKey: "ring",
-		SecretKey: "treepotato",
-	})
-	exit(err)
+	// storage, err := storage.NewMinioStorage(&storage.Config{
+	// 	Endpoint:  "169.253.0.2:9000",
+	// 	AccessKey: "ring",
+	// 	SecretKey: "treepotato",
+	// })
+	// exit(err)
+	cli, err := dockercli.NewClientWithOpts(dockercli.FromEnv)
+	if err != nil {
+		panic(err)
+	}
+	storage := storage.NewBalancedStorage(cli)
 
 	mainSrv := gateway.NewServer(storage)
 
