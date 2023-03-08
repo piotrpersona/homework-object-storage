@@ -9,12 +9,27 @@ import (
 	"time"
 
 	"github.com/spacelift-io/homework-object-storage/internal/gateway"
+	"github.com/spacelift-io/homework-object-storage/internal/storage"
 )
+
+func exit(err error) {
+	if err != nil {
+		log.Println(err.Error())
+		os.Exit(1)
+	}
+}
 
 func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	mainSrv := gateway.NewServer()
+	storage, err := storage.NewMinioStorage(&storage.Config{
+		Endpoint:  "169.253.0.2:9000",
+		AccessKey: "ring",
+		SecretKey: "treepotato",
+	})
+	exit(err)
+
+	mainSrv := gateway.NewServer(storage)
 
 	go func() {
 		if err := mainSrv.Start(":3000"); err != nil {
