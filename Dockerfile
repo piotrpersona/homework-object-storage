@@ -6,7 +6,7 @@ COPY go.* .
 RUN go mod download
 COPY . .
 
-RUN go build  -ldflags="-w -s" -o /mnt/homework/homework-object-storage main.go
+RUN go build  -ldflags="-w -s" -o /mnt/homework/homework-object-storage cmd/gateway/main.go
 
 # Docker is used as a base image so you can easily start playing around in the container using the Docker command line client.
 FROM docker
