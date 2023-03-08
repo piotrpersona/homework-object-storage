@@ -2,6 +2,7 @@ package gateway
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 
@@ -34,7 +35,11 @@ func putObject(storage storage.Storage) func(c echo.Context) error {
 		if !validateObjectID(objectID) {
 			return c.JSON(http.StatusBadRequest, Response{Message: "provide objectID of length [1,32]"})
 		}
-		err := storage.Put(ctx, objectID, contentType, []byte("example"))
+		body, err := io.ReadAll(c.Request().Body)
+		if err != nil {
+			return c.JSON(http.StatusBadRequest, Response{Message: "cannot read requestb body"})
+		}
+		err = storage.Put(ctx, objectID, contentType, body)
 		if err != nil {
 			log.Printf("cannot put object, err: %s", err)
 			return c.JSON(http.StatusInternalServerError, Response{Message: fmt.Sprintf("cannot put object '%s'", objectID)})
